@@ -1,0 +1,85 @@
+name: Migrate All Repositories to RedmiPad-Yunluo Organization
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - source_repo: "xiaomi-mt6789-devs/android_device_xiaomi_yunluo"
+            target_repo: "RedmiPad-Yunluo/android_device_xiaomi_yunluo"
+          - source_repo: "xiaomi-mt6789-devs/android_vendor_xiaomi_yunluo"
+            target_repo: "RedmiPad-Yunluo/android_vendor_xiaomi_yunluo"
+          - source_repo: "xiaomi-mt6789-devs/releases"
+            target_repo: "RedmiPad-Yunluo/releases"
+          - source_repo: "xiaomi-mt6789-devs/android_hardware_mediatek"
+            target_repo: "RedmiPad-Yunluo/android_hardware_mediatek"
+          - source_repo: "xiaomi-mt6789-devs/android_device_mediatek_sepolicy_vndr"
+            target_repo: "RedmiPad-Yunluo/android_device_mediatek_sepolicy_vndr"
+          - source_repo: "xiaomi-mt6789-devs/kernel_xiaomi-yunluo"
+            target_repo: "RedmiPad-Yunluo/kernel_xiaomi-yunluo"
+          - source_repo: "xiaomi-mt6789-devs/android_device_xiaomi_yunluo-kernel"
+            target_repo: "RedmiPad-Yunluo/android_device_xiaomi_yunluo-kernel"
+          - source_repo: "xiaomi-mt6789-devs/kernel_mediatek-modules_connectivity_wlan_core_gen4m"
+            target_repo: "RedmiPad-Yunluo/kernel_mediatek-modules_connectivity_wlan_core_gen4m"
+          - source_repo: "xiaomi-mt6789-devs/kernel_manifest-yunluo"
+            target_repo: "RedmiPad-Yunluo/kernel_manifest-yunluo"
+          - source_repo: "xiaomi-mt6789-devs/kernel_mediatek-modules_connectivity_fmradio"
+            target_repo: "RedmiPad-Yunluo/kernel_mediatek-modules_connectivity_fmradio"
+          - source_repo: "xiaomi-mt6789-devs/kernel_mediatek-modules_connectivity_common"
+            target_repo: "RedmiPad-Yunluo/kernel_mediatek-modules_connectivity_common"
+          - source_repo: "xiaomi-mt6789-devs/kernel_mediatek-modules_connectivity_bt_mt66xx"
+            target_repo: "RedmiPad-Yunluo/kernel_mediatek-modules_connectivity_bt_mt66xx"
+          - source_repo: "xiaomi-mt6789-devs/kernel_mediatek-modules_gpu"
+            target_repo: "RedmiPad-Yunluo/kernel_mediatek-modules_gpu"
+          - source_repo: "xiaomi-mt6789-devs/local_manifests"
+            target_repo: "RedmiPad-Yunluo/local_manifests"
+
+    steps:
+      - name: Install git-filter-repo & GitHub CLI
+        run: sudo apt-get update && sudo apt-get install -y git-filter-repo python3-git gh
+
+      - name: Auto-Create Organization Repo, Process, and Push
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          TARGET_ORG=$(echo "${{ matrix.target_repo }}" | cut -d'/' -f1)
+          REPO_NAME=$(basename "${{ matrix.target_repo }}")
+          FULL_TARGET="${{ matrix.target_repo }}"
+
+          # 1. Automatically create missing repository under the organization
+          echo "Checking if repository $FULL_TARGET exists..."
+          if ! gh repo view "$FULL_TARGET" >/dev/null 2>&1; then
+            echo "Repository does not exist. Creating $FULL_TARGET automatically under $TARGET_ORG..."
+            gh repo create "$FULL_TARGET" --public --description "Migrated from xiaomi-mt6789-devs" || true
+          else
+            echo "Repository $FULL_TARGET already exists."
+          fi
+
+          # 2. Clone single branch with depth limit to avoid hangs
+          git clone --single-branch --depth 500 --no-tags "https://github.com/${{ matrix.source_repo }}.git" "$REPO_NAME"
+          cd "$REPO_NAME"
+
+          # 3. Rename active branch to main if needed
+          CURRENT_BRANCH=$(git branch --show-current)
+          if [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "main" ]; then
+            git branch -m "$CURRENT_BRANCH" main
+          fi
+
+          # 4. Rewrite commit author identity safely via git-filter-repo
+          git filter-repo --refs HEAD --name-callback 'return b"hashyofficial"' --email-callback 'return b"hashyofficial@gmail.com"' --force
+
+          # 5. Configure Git throughput buffers for large pushes
+          git config http.postBuffer 524288000
+          git config http.maxRequestBuffer 100M
+          git config core.compression 0
+
+          # 6. Push rewritten history directly to the main branch of the organization repo
+          git remote remove origin || true
+          git remote add origin "https://x-access-token:${GH_PAT}@github.com/$FULL_TARGET.git"
+          git push -u origin main --force
